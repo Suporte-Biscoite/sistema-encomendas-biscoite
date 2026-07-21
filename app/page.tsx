@@ -1,7 +1,6 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { supabase } from '../lib/supabase';
 
 // Interfaces
 interface Funcionario {
@@ -29,22 +28,6 @@ interface UsuarioSistema {
   usuario: string;
   senha?: string;
 }
-
-// Dados Simulados Iniciais (Adicionado o campo Setor nas encomendas iniciais)
-const funcionariosIniciais = [
-  { id: '1', nome: 'Matheus Carvalho', setor: 'TI', email: 'matheus@biscoite.com.br', whatsapp: '11999999999' },
-  { id: '2', nome: 'Ana Silva', setor: 'RH', email: 'ana.silva@biscoite.com.br', whatsapp: '11988888888' },
-];
-
-const fotoMockExemplo = "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='300' height='200' viewBox='0 0 300 200'><rect width='100%' height='100%' fill='%236385B7'/><text x='50%' y='50%' font-family='sans-serif' font-size='16' fill='white' text-anchor='middle'>SIMULAÇÃO: NOTA FISCAL #251775</text></svg>";
-
-const encomendasIniciais = [
-  { id: '1', created_at: new Date().toISOString(), quem_recebeu: 'seu Didi', status: 'recebido', numero_nota: '251775', foto_preview: fotoMockExemplo, funcionarios: { nome: 'Ana Silva', whatsapp: '11988888888', setor: 'RH' } }
-];
-
-const usuariosSistemaIniciais = [
-  { id: '1', nome: 'Portaria Principal', usuario: 'admin', senha: '123' }
-];
 
 export default function Home() {
   const [telaPrincipal, setTelaPrincipal] = useState<'publico' | 'login' | 'admin'>('publico');
@@ -75,6 +58,8 @@ export default function Home() {
   const [recepcionista, setRecepcionista] = useState('');
   const [numeroNota, setNumeroNota] = useState('');
   const [fotoPreview, setFotoPreview] = useState<string>('');
+  // Arquivo real selecionado, usado para o upload (não afeta a UI existente)
+  const [arquivoFoto, setArquivoFoto] = useState<File | null>(null);
 
   // Estados de Usuários do Sistema
   const [novoOpNome, setNovoOpNome] = useState('');
@@ -90,25 +75,49 @@ export default function Home() {
   const [encomendaParaBaixar, setEncomendaParaBaixar] = useState<Encomenda | null>(null);
   const [nomeRetiranteModal, setNomeRetiranteModal] = useState('');
 
+  const carregarFuncionarios = async () => {
+    const resp = await fetch('/api/funcionarios');
+    if (resp.ok) setFuncionarios(await resp.json());
+  };
+
+  const carregarEncomendas = async () => {
+    const resp = await fetch('/api/encomendas');
+    if (resp.ok) setEncomendas(await resp.json());
+  };
+
+  const carregarUsuariosSistema = async () => {
+    const resp = await fetch('/api/usuarios');
+    if (resp.ok) setUsuariosSistema(await resp.json());
+  };
+
   const carregarDados = async () => {
     setLoading(true);
-    if (!supabase) {
-      if (funcionarios.length === 0) setFuncionarios(funcionariosIniciais);
-      if (encomendas.length === 0) setEncomendas(encomendasIniciais);
-      if (usuariosSistema.length === 0) setUsuariosSistema(usuariosSistemaIniciais);
-      setLoading(false);
-      return;
-    }
+    await Promise.all([carregarFuncionarios(), carregarEncomendas()]);
     setLoading(false);
   };
 
   useEffect(() => {
-    carregarDados();
+    const iniciar = async () => {
+      // Verifica se já existe uma sessão de operador ativa (cookie httpOnly)
+      const respSessao = await fetch('/api/auth/me');
+      if (respSessao.ok) {
+        const { usuario } = await respSessao.json();
+        if (usuario) {
+          setUsuarioLogado(usuario);
+          setTelaPrincipal('admin');
+          await carregarUsuariosSistema();
+        }
+      }
+      await carregarDados();
+    };
+    iniciar();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const handleFotoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
+      setArquivoFoto(file);
       const reader = new FileReader();
       reader.onloadend = () => setFotoPreview(reader.result as string);
       reader.readAsDataURL(file);
@@ -120,10 +129,10 @@ export default function Home() {
     if (!arquivo) return;
 
     const leitor = new FileReader();
-    leitor.onload = (evento) => {
+    leitor.onload = async (evento) => {
       const texto = evento.target?.result as string;
       const lines = texto.split('\n');
-      const novosFuncionarios: Funcionario[] = [];
+      const novosFuncionarios: { nome: string; setor: string; email: string; whatsapp?: string }[] = [];
 
       for (let i = 1; i < lines.length; i++) {
         const line = lines[i].trim();
@@ -133,7 +142,6 @@ export default function Home() {
 
         if (colunas.length >= 3) {
           novosFuncionarios.push({
-            id: String(Date.now() + i),
             nome: colunas[0]?.trim(),
             setor: colunas[1]?.trim(),
             email: colunas[2]?.trim(),
@@ -143,8 +151,20 @@ export default function Home() {
       }
 
       if (novosFuncionarios.length > 0) {
-        setFuncionarios([...funcionarios, ...novosFuncionarios]);
-        alert(`${novosFuncionarios.length} colaboradores importados com sucesso!`);
+        const resp = await fetch('/api/funcionarios/importar', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ itens: novosFuncionarios }),
+        });
+
+        if (resp.ok) {
+          const resultado = await resp.json();
+          await carregarFuncionarios();
+          alert(`${resultado.importados} colaboradores importados com sucesso!`);
+        } else {
+          const erro = await resp.json();
+          alert(erro.error || 'Erro ao importar colaboradores.');
+        }
       }
     };
     leitor.readAsText(arquivo, 'UTF-8');
@@ -153,9 +173,9 @@ export default function Home() {
 
   const exportarRelatorioCSV = () => {
     if (encomendas.length === 0) return alert('Nenhum registro para exportar.');
-    
+
     let csvConteudo = 'Nome Colaborador;Nota Fiscal;Recebido Por;Data Entrada;Status;Quem Retirou\n';
-    
+
     encomendas.forEach(e => {
       const nome = e.funcionarios?.nome || 'Excluído';
       const nf = e.numero_nota || 'Sem NF';
@@ -163,7 +183,7 @@ export default function Home() {
       const data = new Date(e.created_at).toLocaleString('pt-BR');
       const status = e.status === 'recebido' ? 'Aguardando' : 'Retirado';
       const retirou = e.quem_retirou || '—';
-      
+
       csvConteudo += `${nome};${nf};${operador};${data};${status};${retirou}\n`;
     });
 
@@ -177,87 +197,160 @@ export default function Home() {
     document.body.removeChild(link);
   };
 
-  const handleLogin = (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    const conta = usuariosSistema.find(u => u.usuario === inputUser && u.senha === inputSenha);
-    if (conta) {
+    const resp = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ usuario: inputUser, senha: inputSenha }),
+    });
+
+    if (resp.ok) {
+      const conta = await resp.json();
       setUsuarioLogado(conta);
       setTelaPrincipal('admin');
       setInputUser(''); setInputSenha('');
+      await carregarUsuariosSistema();
     } else {
       alert('Usuário ou senha incorretos!');
     }
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    await fetch('/api/auth/logout', { method: 'POST' });
     setUsuarioLogado(null);
+    setUsuariosSistema([]);
     setTelaPrincipal('publico');
   };
 
-  const cadastrarOperador = (e: React.FormEvent) => {
+  const cadastrarOperador = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!novoOpNome || !novoOpUser || !novoOpSenha) return alert('Preencha todos os campos!');
-    const novo = { id: String(Date.now()), nome: novoOpNome, usuario: novoOpUser, senha: novoOpSenha };
-    setUsuariosSistema([...usuariosSistema, novo]);
-    setNovoOpNome(''); setNovoOpUser(''); setNovoOpSenha('');
-  };
 
-  const deletarOperador = (id: string) => {
-    if (usuariosSistema.length <= 1) return alert('O sistema precisa ter pelo menos 1 operador!');
-    if (confirm('Deseja remover o acesso deste usuário?')) {
-      setUsuariosSistema(usuariosSistema.filter(u => u.id !== id));
+    const resp = await fetch('/api/usuarios', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ nome: novoOpNome, usuario: novoOpUser, senha: novoOpSenha }),
+    });
+
+    if (resp.ok) {
+      await carregarUsuariosSistema();
+      setNovoOpNome(''); setNovoOpUser(''); setNovoOpSenha('');
+    } else {
+      const erro = await resp.json();
+      alert(erro.error || 'Erro ao criar operador.');
     }
   };
 
-  const salvarFuncionarioForm = (e: React.FormEvent) => {
+  const deletarOperador = async (id: string) => {
+    if (usuariosSistema.length <= 1) return alert('O sistema precisa ter pelo menos 1 operador!');
+    if (confirm('Deseja remover o acesso deste usuário?')) {
+      const resp = await fetch(`/api/usuarios/${id}`, { method: 'DELETE' });
+      if (resp.ok) {
+        await carregarUsuariosSistema();
+      } else {
+        const erro = await resp.json();
+        alert(erro.error || 'Erro ao remover operador.');
+      }
+    }
+  };
+
+  const salvarFuncionarioForm = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!nomeFunc || !setorFunc || !emailFunc) return alert('Preencha os campos obrigatórios!');
 
-    if (idEditandoFunc) {
-      setFuncionarios(funcionarios.map(f => f.id === idEditandoFunc ? { ...f, nome: nomeFunc, setor: setorFunc, email: emailFunc, whatsapp: whatsFunc } : f));
-      setIdEditandoFunc(null);
-      alert('Cadastro atualizado!');
+    const payload = { nome: nomeFunc, setor: setorFunc, email: emailFunc, whatsapp: whatsFunc };
+
+    const resp = idEditandoFunc
+      ? await fetch(`/api/funcionarios/${idEditandoFunc}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        })
+      : await fetch('/api/funcionarios', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+
+    if (resp.ok) {
+      await carregarFuncionarios();
+      if (idEditandoFunc) {
+        setIdEditandoFunc(null);
+        alert('Cadastro atualizado!');
+      }
     } else {
-      const novo = { id: String(Date.now()), nome: nomeFunc, setor: setorFunc, email: emailFunc, whatsapp: whatsFunc };
-      setFuncionarios([...funcionarios, novo]);
+      const erro = await resp.json();
+      alert(erro.error || 'Erro ao salvar colaborador.');
     }
+
     setNomeFunc(''); setSetorFunc(''); setEmailFunc(''); setWhatsFunc('');
   };
 
-  const deletarFuncionario = (id: string) => {
+  const deletarFuncionario = async (id: string) => {
     if (confirm('Deseja remover este colaborador do sistema?')) {
-      setFuncionarios(funcionarios.filter(f => f.id !== id));
+      const resp = await fetch(`/api/funcionarios/${id}`, { method: 'DELETE' });
+      if (resp.ok) {
+        await carregarFuncionarios();
+      } else {
+        const erro = await resp.json();
+        alert(erro.error || 'Erro ao remover colaborador.');
+      }
     }
   };
 
-  const registrarEncomenda = (e: React.FormEvent) => {
+  const registrarEncomenda = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!destinatarioId || !recepcionista) return alert('Preencha os campos obrigatórios!');
-    const func = funcionarios.find(f => f.id === destinatarioId);
-    const nova = { 
-      id: String(Date.now()), 
-      created_at: new Date().toISOString(), 
-      quem_recebeu: recepcionista, 
-      status: 'recebido',
-      numero_nota: numeroNota,
-      foto_preview: fotoPreview || fotoMockExemplo,
-      // 🌟 Passa o setor para o histórico da encomenda
-      funcionarios: func ? { nome: func.nome, whatsapp: func.whatsapp, setor: func.setor } : null 
-    };
-    setEncomendas([nova, ...encomendas]);
-    setRecepcionista(''); setDestinatarioId(''); setNumeroNota(''); setFotoPreview('');
+
+    let fotoUrl: string | undefined;
+    if (arquivoFoto) {
+      const formData = new FormData();
+      formData.append('arquivo', arquivoFoto);
+      const respUpload = await fetch('/api/upload', { method: 'POST', body: formData });
+      if (respUpload.ok) {
+        fotoUrl = (await respUpload.json()).url;
+      } else {
+        const erro = await respUpload.json();
+        return alert(erro.error || 'Erro ao enviar a foto.');
+      }
+    }
+
+    const resp = await fetch('/api/encomendas', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        destinatario_id: destinatarioId,
+        quem_recebeu: recepcionista,
+        numero_nota: numeroNota,
+        foto_url: fotoUrl,
+      }),
+    });
+
+    if (resp.ok) {
+      await carregarEncomendas();
+      setRecepcionista(''); setDestinatarioId(''); setNumeroNota(''); setFotoPreview(''); setArquivoFoto(null);
+    } else {
+      const erro = await resp.json();
+      alert(erro.error || 'Erro ao registrar encomenda.');
+    }
   };
 
-  const confirmarBaixaModal = () => {
+  const confirmarBaixaModal = async () => {
     if (!encomendaParaBaixar) return;
 
-    setEncomendas(encomendas.map(e => {
-      if (e.id === encomendaParaBaixar.id) {
-        const quemBuscou = nomeRetiranteModal.trim() || e.funcionarios?.nome || 'Destinatário';
-        return { ...e, status: 'retirado', quem_retirou: quemBuscou };
-      }
-      return e;
-    }));
+    const resp = await fetch(`/api/encomendas/${encomendaParaBaixar.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ quem_retirou: nomeRetiranteModal.trim() }),
+    });
+
+    if (resp.ok) {
+      await carregarEncomendas();
+    } else {
+      const erro = await resp.json();
+      alert(erro.error || 'Erro ao confirmar retirada.');
+    }
 
     setEncomendaParaBaixar(null);
     setNomeRetiranteModal('');
@@ -272,7 +365,7 @@ export default function Home() {
 
   // Filtros
   const encomendasPendentesLogistica = encomendas.filter(e => e.status.toLowerCase() === 'recebido');
-  
+
   const encomendasFiltradas = encomendas.filter(enc => {
     const bateBusca = enc.funcionarios?.nome.toLowerCase().includes(buscaEncomenda.toLowerCase());
     const bateStatus = filtroStatusAdmin === 'todos' ? true : enc.status.toLowerCase() === filtroStatusAdmin;
