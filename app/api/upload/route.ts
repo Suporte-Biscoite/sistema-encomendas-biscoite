@@ -3,7 +3,7 @@ import { randomUUID } from 'crypto';
 import { supabaseAdmin } from '@/lib/supabase-admin';
 import { exigirSessao } from '@/lib/auth-guard';
 
-const BUCKET = 'encomendas-fotos';
+const BUCKET = 'encomenda-fotos';
 const TAMANHO_MAXIMO_BYTES = 8 * 1024 * 1024; // 8MB
 
 export async function POST(request: NextRequest) {
