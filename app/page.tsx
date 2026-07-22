@@ -60,6 +60,8 @@ export default function Home() {
   const [fotoPreview, setFotoPreview] = useState<string>('');
   // Arquivo real selecionado, usado para o upload (não afeta a UI existente)
   const [arquivoFoto, setArquivoFoto] = useState<File | null>(null);
+  // Trava o formulário enquanto a requisição está em andamento (evita registro duplicado em duplo toque/clique)
+  const [salvandoEncomenda, setSalvandoEncomenda] = useState(false);
 
   // Estados de Usuários do Sistema
   const [novoOpNome, setNovoOpNome] = useState('');
@@ -301,38 +303,45 @@ export default function Home() {
 
   const registrarEncomenda = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (salvandoEncomenda) return; // já existe um envio em andamento, ignora toques/cliques repetidos
     if (!destinatarioId || !recepcionista) return alert('Preencha os campos obrigatórios!');
 
-    let fotoUrl: string | undefined;
-    if (arquivoFoto) {
-      const formData = new FormData();
-      formData.append('arquivo', arquivoFoto);
-      const respUpload = await fetch('/api/upload', { method: 'POST', body: formData });
-      if (respUpload.ok) {
-        fotoUrl = (await respUpload.json()).url;
-      } else {
-        const erro = await respUpload.json();
-        return alert(erro.error || 'Erro ao enviar a foto.');
+    setSalvandoEncomenda(true);
+    try {
+      let fotoUrl: string | undefined;
+      if (arquivoFoto) {
+        const formData = new FormData();
+        formData.append('arquivo', arquivoFoto);
+        const respUpload = await fetch('/api/upload', { method: 'POST', body: formData });
+        if (respUpload.ok) {
+          fotoUrl = (await respUpload.json()).url;
+        } else {
+          const erro = await respUpload.json();
+          alert(erro.error || 'Erro ao enviar a foto.');
+          return;
+        }
       }
-    }
 
-    const resp = await fetch('/api/encomendas', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        destinatario_id: destinatarioId,
-        quem_recebeu: recepcionista,
-        numero_nota: numeroNota,
-        foto_url: fotoUrl,
-      }),
-    });
+      const resp = await fetch('/api/encomendas', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          destinatario_id: destinatarioId,
+          quem_recebeu: recepcionista,
+          numero_nota: numeroNota,
+          foto_url: fotoUrl,
+        }),
+      });
 
-    if (resp.ok) {
-      await carregarEncomendas();
-      setRecepcionista(''); setDestinatarioId(''); setNumeroNota(''); setFotoPreview(''); setArquivoFoto(null);
-    } else {
-      const erro = await resp.json();
-      alert(erro.error || 'Erro ao registrar encomenda.');
+      if (resp.ok) {
+        await carregarEncomendas();
+        setRecepcionista(''); setDestinatarioId(''); setNumeroNota(''); setFotoPreview(''); setArquivoFoto(null);
+      } else {
+        const erro = await resp.json();
+        alert(erro.error || 'Erro ao registrar encomenda.');
+      }
+    } finally {
+      setSalvandoEncomenda(false);
     }
   };
 
@@ -541,7 +550,9 @@ export default function Home() {
                         <input type="file" accept="image/*" capture="environment" className="hidden" onChange={handleFotoChange} />
                       </label>
                     </div>
-                    <button type="submit" className="w-full bg-biscoite-primary text-white p-3 rounded-lg font-semibold text-sm transition h-11">Registrar Entrada</button>
+                    <button type="submit" disabled={salvandoEncomenda} className="w-full bg-biscoite-primary text-white p-3 rounded-lg font-semibold text-sm transition h-11 disabled:opacity-60 disabled:cursor-not-allowed">
+                      {salvandoEncomenda ? 'Registrando...' : 'Registrar Entrada'}
+                    </button>
                   </form>
                 </div>
 
@@ -623,6 +634,53 @@ export default function Home() {
                         )}
                       </tbody>
                     </table>
+                  </div>
+
+                  {/* Versão em cards para telas pequenas (celular) — mesma listagem e ações da tabela acima */}
+                  <div className="md:hidden space-y-3">
+                    {encomendasFiltradas.length === 0 ? (
+                      <p className="p-8 text-center text-gray-400 text-xs font-medium bg-white rounded-xl border border-gray-100">Nenhuma encomenda nesta listagem.</p>
+                    ) : (
+                      encomendasFiltradas.map(enc => (
+                        <div key={enc.id} className="bg-white rounded-xl border border-gray-100 p-4 space-y-3 shadow-sm">
+                          <div className="flex items-start justify-between gap-2">
+                            <div>
+                              <p className="font-semibold text-biscoite-dark text-sm">{enc.funcionarios?.nome}</p>
+                              <p className="text-xs text-gray-400 font-mono mt-0.5">{enc.numero_nota ? `NF #${enc.numero_nota}` : 'Sem NF'}</p>
+                            </div>
+                            {enc.status === 'recebido' ? (
+                              <span className="px-2.5 py-0.5 rounded-full text-xs font-medium border bg-amber-50 text-amber-700 border-amber-200 whitespace-nowrap">Aguardando</span>
+                            ) : (
+                              <span className="px-2.5 py-0.5 rounded-full text-xs font-medium border bg-emerald-50 text-emerald-700 border-emerald-200 whitespace-nowrap">Retirado</span>
+                            )}
+                          </div>
+
+                          <div className="text-xs text-gray-500 space-y-0.5">
+                            <p><span className="font-semibold text-gray-600">Operador:</span> {enc.quem_recebeu}</p>
+                            {enc.status !== 'recebido' && <p><span className="font-semibold text-gray-600">Retirado por:</span> {enc.quem_retirou}</p>}
+                          </div>
+
+                          <div className="flex items-center flex-wrap gap-1.5 pt-1 border-t border-gray-50">
+                            {enc.foto_preview && <button onClick={() => setModalFoto(enc.foto_preview || null)} className="border border-gray-200 text-gray-600 px-2.5 py-1.5 rounded text-xs font-semibold hover:bg-gray-50 transition">Ver Nota</button>}
+
+                            {enc.status === 'recebido' && enc.funcionarios?.whatsapp && (
+                              <button onClick={() => abrirMensagemWhatsApp(enc)} className="bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 px-2.5 py-1.5 rounded text-xs font-semibold transition">
+                                Avisar Whats
+                              </button>
+                            )}
+
+                            {enc.status === 'recebido' ? (
+                              <button
+                                onClick={() => setEncomendaParaBaixar(enc)}
+                                className="ml-auto bg-biscoite-primary text-white px-3 py-1.5 rounded text-xs font-semibold hover:bg-biscoite-brand transition shadow-sm"
+                              >
+                                Dar Baixa
+                              </button>
+                            ) : <span className="ml-auto text-xs text-gray-400">✓ Entregue</span>}
+                          </div>
+                        </div>
+                      ))
+                    )}
                   </div>
                 </div>
               </div>
