@@ -55,6 +55,8 @@ export default function Home() {
 
   // Estados do Formulário de Encomendas
   const [destinatarioId, setDestinatarioId] = useState('');
+  const [buscaDestinatarioInput, setBuscaDestinatarioInput] = useState('');
+  const [mostrarListaDestinatarios, setMostrarListaDestinatarios] = useState(false);
   const [recepcionista, setRecepcionista] = useState('');
   const [numeroNota, setNumeroNota] = useState('');
   const [fotoPreview, setFotoPreview] = useState<string>('');
@@ -335,7 +337,7 @@ export default function Home() {
 
       if (resp.ok) {
         await carregarEncomendas();
-        setRecepcionista(''); setDestinatarioId(''); setNumeroNota(''); setFotoPreview(''); setArquivoFoto(null);
+        setRecepcionista(''); setDestinatarioId(''); setBuscaDestinatarioInput(''); setNumeroNota(''); setFotoPreview(''); setArquivoFoto(null);
       } else {
         const erro = await resp.json();
         alert(erro.error || 'Erro ao registrar encomenda.');
@@ -382,6 +384,7 @@ export default function Home() {
   });
 
   const funcionariosFiltrados = funcionarios.filter(f => f.nome.toLowerCase().includes(buscaFuncionario.toLowerCase()));
+  const funcionariosParaDestinatario = funcionarios.filter(f => f.nome.toLowerCase().includes(buscaDestinatarioInput.toLowerCase()));
   const encomendasPublicasFiltradas = encomendasPendentesLogistica.filter(enc => enc.funcionarios?.nome.toLowerCase().includes(buscaPublica.toLowerCase()));
   const funcionarioSelecionado = funcionarios.find(f => f.id === destinatarioId);
 
@@ -524,10 +527,35 @@ export default function Home() {
                   <form onSubmit={registrarEncomenda} className="space-y-4">
                     <div>
                       <label className="block text-[10px] font-bold uppercase text-gray-400 mb-1">Destinatário *</label>
-                      <select className="w-full p-2.5 border border-gray-200 rounded-lg bg-white text-sm outline-none h-11" value={destinatarioId} onChange={(e) => setDestinatarioId(e.target.value)}>
-                        <option value="">Selecione quem vai receber...</option>
-                        {funcionarios.map(f => <option key={f.id} value={f.id}>{f.nome} — [{f.setor}]</option>)}
-                      </select>
+                      <div className="relative">
+                        <input
+                          type="text"
+                          placeholder="Buscar colaborador pelo nome..."
+                          className="w-full p-2.5 border border-gray-200 rounded-lg bg-white text-sm outline-none h-11"
+                          value={buscaDestinatarioInput}
+                          onChange={(e) => { setBuscaDestinatarioInput(e.target.value); setDestinatarioId(''); setMostrarListaDestinatarios(true); }}
+                          onFocus={() => setMostrarListaDestinatarios(true)}
+                          onBlur={() => setTimeout(() => setMostrarListaDestinatarios(false), 150)}
+                        />
+                        {mostrarListaDestinatarios && (
+                          <div className="absolute z-10 mt-1 w-full bg-white border border-gray-200 rounded-lg shadow-lg max-h-48 overflow-y-auto">
+                            {funcionariosParaDestinatario.length === 0 ? (
+                              <p className="p-3 text-xs text-gray-400">Nenhum colaborador encontrado.</p>
+                            ) : (
+                              funcionariosParaDestinatario.map(f => (
+                                <button
+                                  type="button"
+                                  key={f.id}
+                                  onMouseDown={() => { setDestinatarioId(f.id); setBuscaDestinatarioInput(f.nome); setMostrarListaDestinatarios(false); }}
+                                  className="block w-full text-left px-3 py-2 text-sm hover:bg-gray-50 transition border-b border-gray-50 last:border-b-0"
+                                >
+                                  {f.nome} <span className="text-xs text-gray-400">— [{f.setor}]</span>
+                                </button>
+                              ))
+                            )}
+                          </div>
+                        )}
+                      </div>
                       {funcionarioSelecionado && (
                         <div className="mt-2 p-2.5 bg-blue-50/50 border border-biscoite-brand/20 rounded-lg text-xs space-y-1">
                           <p className="text-gray-600">📧 <span className="font-semibold text-biscoite-dark">E-mail:</span> {funcionarioSelecionado.email}</p>
